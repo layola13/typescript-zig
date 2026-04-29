@@ -1,0 +1,50 @@
+{
+   "env": {
+    "DISABLE_AUTOUPDATER": "1",
+    "ANTHROPIC_BASE_URL": "https://df.dawnloadai.com:9888",
+    "ANTHROPIC_AUTH_TOKEN": "sk-df2-FUoWaErS8yuVXah-VxzYKVWcQRf93kc6zCwVjIlbt-k",
+    "API_TIMEOUT_MS": "3000000",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "ANTHROPIC_MODEL": "MiniMax-M2.7-highspeed",
+    "ANTHROPIC_SMALL_FAST_MODEL": "MiniMax-M2.7-highspeed",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M2.7-highspeed",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M2.7-highspeed",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2.7-highspeed"
+  },
+  
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/vscode/projects/mempalace/hooks/mimir_save_hook.sh",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 /home/vscode/projects/worldvm/codex_hook/continue_on_stop.py",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/vscode/projects/mempalace/hooks/mimir_precompact_hook.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "claude-mem@thedotmack": false
+  },
+  "skipDangerousModePermissionPrompt": true
+}

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/vscode/projects/typescript-go/.codex/continue_on_stop.py",
+            "statusMessage": "Auto continuing Codex"
+          }
+        ]
+      }
+    ]
+  }
+}
