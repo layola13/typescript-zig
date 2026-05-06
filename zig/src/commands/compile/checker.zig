@@ -2214,3 +2214,85 @@ test "checker writes graph json" {
     try std.testing.expect(std.mem.indexOf(u8, buffer.items, "\"to\":\"/tmp/b.ts\"") != null);
 }
 
+
+// Additional type checking for variable declarations
+pub fn checkVariableTypes(
+    allocator: std.mem.Allocator,
+    declarations: []const parser.Declaration,
+) !CheckSummary {
+    var summary = CheckSummary.init(allocator);
+    
+    for (declarations) |decl| {
+        if (decl.kind != .variable_stmt) continue;
+        
+        const name = decl.name orelse continue;
+        
+        // Check type annotation
+        if (decl.type_annotation) |type_str| {
+            if (!isValidTypeAnnotation(type_str)) {
+                try summary.diagnostics.append(.{
+                    .message = try std.fmt.allocPrint(allocator, "Invalid type: {s}", .{type_str}),
+                    .subject = try allocator.dupe(u8, name),
+                    .kind = .unresolved_import, // Reuse for type errors
+                    .space = null,
+                    .first_path = try allocator.dupe(u8, decl.name.?),
+                    .second_path = null,
+                });
+            }
+        }
+        
+        // Check initializer type matches annotation
+        if (decl.initializer) |init_str| {
+            if (decl.type_annotation) |type_str| {
+                if (!initializerMatchesType(init_str, type_str)) {
+                    try summary.diagnostics.append(.{
+                        .message = try std.fmt.allocPrint(allocator, "Type '{s}' not assignable to '{s}'", .{init_str, type_str}),
+                        .subject = try allocator.dupe(u8, name),
+                        .kind = .unresolved_import,
+                        .space = null,
+                        .first_path = try allocator.dupe(u8, name),
+                        .second_path = null,
+                    });
+                }
+            }
+        }
+    }
+    
+    return summary;
+}
+
+fn isValidTypeAnnotation(type_str: []const u8) bool {
+    if (type_str.len == 0) return false;
+    const valid = &[_][]const u8{ "string", "number", "boolean", "any", "void", "null", "undefined", "never", "object", "unknown" };
+    for (valid) |t| if (std.mem.eql(u8, type_str, t)) return true;
+    // Generic types
+    if (std.mem.indexOfScalar(u8, type_str, '<') != null) return true;
+    // Array types
+    if (std.mem.endsWith(u8, type_str, "[]")) return true;
+    // Custom types start with uppercase
+    return std.ascii.isUpper(type_str[0]);
+}
+
+fn initializerMatchesType(init: []const u8, type_str: []const u8) bool {
+    if (init.len == 0) return false;
+    
+    if (std.mem.eql(u8, type_str, "number")) {
+        return isNumericLiteral(init);
+    }
+    if (std.mem.eql(u8, type_str, "string")) {
+        return init[0] == '"' or init[0] == '\'';
+    }
+    if (std.mem.eql(u8, type_str, "boolean")) {
+        return std.mem.eql(u8, init, "true") or std.mem.eql(u8, init, "false");
+    }
+    if (std.mem.eql(u8, type_str, "any")) return true;
+    
+    return true; // Unknown types pass for now
+}
+
+fn isNumericLiteral(s: []const u8) bool {
+    if (s.len == 0) return false;
+    if (s[0] == '-') return isNumericLiteral(s[1..]);
+    for (s) |c| if (c < '0' or c > '9') return false;
+    return true;
+}

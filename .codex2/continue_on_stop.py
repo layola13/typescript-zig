@@ -15,7 +15,7 @@ def main() -> int:
             print(f"invalid hook input: {exc}", file=sys.stderr)
             return 1
 
-    prompt = os.environ.get("CODEX_AUTO_CONTINUE_TEXT", "continue!请检查是否全部用zig完成了重构，如果没有请继续重构，直到全部用zig完成了重构。如果你觉得完成了重构，单元测试全部通过了吗？如果没有请继续重构，直到单元测试全部通过了。")
+    prompt = os.environ.get("CODEX_AUTO_CONTINUE_TEXT", "continue!你详细对比GO版本，看看AST分析，CHECKER检查器，compile编译器，是否完全一致了？如果没有一致，记住这次差异，就像完成")
     result = {
         "decision": "block",
         "reason": prompt,

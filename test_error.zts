@@ -1,0 +1,4 @@
+// Type error test
+const x: number = "hello";  // Should error: string assigned to number
+const y: number = 42;
+const z = x + y;

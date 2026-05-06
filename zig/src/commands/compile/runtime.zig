@@ -2,6 +2,8 @@ const std = @import("std");
 const cli_help = @import("../../cli/help.zig");
 const version_info = @import("../../version.zig");
 const types = @import("./types.zig");
+const Action = types.Action;
+const Mode = types.Mode;
 const config = @import("./config.zig");
 const plan = @import("./plan.zig");
 const source = @import("./source.zig");
@@ -50,7 +52,7 @@ fn runShowConfig(request: *const types.CompileRequest, result: *types.CompileRes
             return result.exit_code;
         }
         result.exit_code = 1;
-        result.diagnostic = "Cannot find a tsconfig.json file for '--showConfig'.";
+        result.diagnostic = types.Diagnostic{ .severity = .@"error", .error_code = 0, .message = "Cannot find a tsconfig.json file for '--showConfig'." };
         return result.exit_code;
     };
 
@@ -75,7 +77,7 @@ fn runInit(request: *const types.CompileRequest, result: *types.CompileResult, w
             return result.exit_code;
         }
         result.exit_code = 1;
-        result.diagnostic = "A tsconfig.json file is already defined in the current directory.";
+        result.diagnostic = types.Diagnostic{ .severity = .@"error", .error_code = 0, .message = "A tsconfig.json file is already defined in the current directory." };
         return result.exit_code;
     } else |_| {}
 
@@ -602,7 +604,7 @@ fn findTsgoBinary() ?[]const u8 {
     return null;
 }
 
-fn actionLabel(action: types.CompileAction) []const u8 {
+fn actionLabel(action: Action) []const u8 {
     return switch (action) {
         .print_help => "help",
         .print_version => "version",
@@ -615,7 +617,7 @@ fn actionLabel(action: types.CompileAction) []const u8 {
     };
 }
 
-fn modeLabel(mode: @import("../../cli/types.zig").CompileMode) []const u8 {
+fn modeLabel(mode: Mode) []const u8 {
     return switch (mode) {
         .normal => "normal",
         .build => "build",
@@ -626,9 +628,13 @@ fn modeLabel(mode: @import("../../cli/types.zig").CompileMode) []const u8 {
 fn configLabel(config_resolution: types.ConfigResolution) []const u8 {
     return switch (config_resolution) {
         .none => "none",
+        
         .explicit_project => "explicit-project",
         .discovered_local_tsconfig => "local-tsconfig",
         .skipped_by_ignore_config => "ignore-config",
+        .no => "no",
+        .found => "found",
+        .fallback => "fallback",
     };
 }
 

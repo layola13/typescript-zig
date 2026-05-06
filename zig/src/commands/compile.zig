@@ -1,138 +1,93 @@
 const std = @import("std");
 const cli_types = @import("../cli/types.zig");
-const compile_parse = @import("./compile/parse.zig");
 const compile_execute = @import("./compile/execute.zig");
-const compile_render = @import("./compile/render.zig");
-const compile_runtime = @import("./compile/runtime.zig");
+const compile_parse = @import("./compile/parse.zig");
+const compile_plan = @import("./compile/plan.zig");
+const compile_source = @import("./compile/source.zig");
+const compile_binder = @import("./compile/binder.zig");
+const compile_checker = @import("./compile/checker.zig");
+const compile_emitter = @import("./compile/emitter.zig");
 
-pub fn run(parsed: *cli_types.ParsedArgs, writer: anytype) !u8 {
-    var request = try compile_parse.requestFromParsed(std.heap.page_allocator, parsed);
-    defer request.deinit();
+pub fn run(request: *const cli_types.ParsedArgs, writer: anytype) !u8 {
+    const allocator = std.heap.page_allocator;
 
-    var result = compile_execute.execute(&request);
-    const exit_code = try compile_runtime.run(&request, &result, writer);
-    if (result.diagnostic != null or result.action == .failed) {
-        if (request.flags.graph_json) {
-            try writeRejectedGraphJson(writer, &request, &result);
-            return exit_code;
-        }
-        try compile_render.writeResult(writer, result);
-    } else {
-        if (result.list_files_only or result.native_failed or request.flags.graph_json) {
-            return exit_code;
-        }
-        switch (result.action) {
-            .compile, .build, .start_watch => try compile_render.writeResult(writer, result),
-            .print_help, .print_version, .init_config, .show_config => {},
-            .failed => unreachable,
-        }
-    }
-    return exit_code;
-}
+    var compile_request = try compile_parse.requestFromParsed(allocator, request);
+    defer compile_request.deinit();
 
-fn writeRejectedGraphJson(
-    writer: anytype,
-    request: *const @import("./compile/types.zig").CompileRequest,
-    result: *const @import("./compile/types.zig").CompileResult,
-) !void {
-    var cwd_buffer: [std.fs.max_path_bytes]u8 = undefined;
-    const cwd = try std.process.getCwd(&cwd_buffer);
+    const result = compile_execute.execute(&compile_request);
 
-    try writer.writeAll("{\"status\":\"error\",\"stage\":\"request\"");
-    try writer.writeAll(",\"schemaVersion\":1,\"cwd\":");
-    try std.json.encodeJsonString(cwd, .{}, writer);
-    try writer.print(",\"exitCode\":{d}", .{result.exit_code});
-    try writer.writeAll(",\"action\":\"failed\",\"mode\":");
-    try std.json.encodeJsonString(modeLabel(result.mode), .{}, writer);
-    try writer.writeAll(",\"config\":");
-    try std.json.encodeJsonString(configLabel(result.config_resolution), .{}, writer);
-    try writer.writeAll(",\"request\":{");
-    try writer.writeAll("\"projectPath\":");
-    if (request.project_path) |project_path| {
-        try std.json.encodeJsonString(project_path, .{}, writer);
-    } else {
-        try writer.writeAll("null");
-    }
-    try writer.writeAll(",\"entryFiles\":[");
-    for (request.entry_files.items, 0..) |entry_file, index| {
-        if (index > 0) try writer.writeAll(",");
-        try std.json.encodeJsonString(entry_file, .{}, writer);
-    }
-    try writer.writeAll("],\"passthrough\":[");
-    for (request.passthrough.items, 0..) |arg, index| {
-        if (index > 0) try writer.writeAll(",");
-        try std.json.encodeJsonString(arg, .{}, writer);
-    }
-    try writer.writeAll("],\"flags\":{");
+    var native_plan = try compile_plan.buildPlan(allocator, &compile_request, &result);
+    defer native_plan.deinit(allocator);
+
+    try writer.writeAll("zts: compile phase=plan\n");
+    try compile_plan.writePlan(writer, &compile_request, &result, &native_plan);
+
+    var source_summary = try compile_source.loadSources(allocator, &native_plan);
+    defer source_summary.deinit(allocator);
+
+    try writer.writeAll("zts: compile phase=source\n");
+    try compile_source.writeSummary(writer, &native_plan, &source_summary);
+
+    try writer.print("zts: tokenize summary(tokens={d})\n", .{source_summary.token_count});
+
     try writer.print(
-        "\"help\":{s},\"version\":{s},\"init\":{s},\"showConfig\":{s},\"graphJson\":{s},\"listFilesOnly\":{s},\"ignoreConfig\":{s},\"all\":{s}",
+        "zts: parse summary(decls={d}, imports={d}, exports={d}, functions={d}, classes={d})\n",
         .{
-            if (request.flags.help) "true" else "false",
-            if (request.flags.version) "true" else "false",
-            if (request.flags.init) "true" else "false",
-            if (request.flags.show_config) "true" else "false",
-            if (request.flags.graph_json) "true" else "false",
-            if (request.flags.list_files_only) "true" else "false",
-            if (request.flags.ignore_config) "true" else "false",
-            if (request.flags.all) "true" else "false",
+            source_summary.declaration_count,
+            source_summary.import_count,
+            source_summary.export_count,
+            source_summary.function_count,
+            source_summary.class_count,
         },
     );
-    try writer.writeAll("}}");
-    try writer.writeAll(",\"roots\":[");
-    for (request.entry_files.items, 0..) |root, index| {
-        if (index > 0) try writer.writeAll(",");
-        try std.json.encodeJsonString(root, .{}, writer);
+
+    var bind_summary = try compile_binder.bindProgram(allocator, &source_summary);
+    defer bind_summary.deinit(allocator);
+
+    try writer.writeAll("zts: compile phase=bind\n");
+    try compile_binder.writeSummary(writer, &bind_summary);
+
+    var check_summary = try compile_checker.checkProgram(allocator, &native_plan, &source_summary, &bind_summary);
+    defer check_summary.deinit(allocator);
+
+    try writer.writeAll("zts: compile phase=check\n");
+    try compile_checker.writeSummary(writer, &check_summary);
+
+    // Emit phase
+    try writer.writeAll("zts: compile phase=emit\n");
+    const emit_options = compile_emitter.EmitOptions{
+        .emit_js = true,
+        .emit_declarations = false,
+        .out_dir = native_plan.out_dir,
+        .root_dir = native_plan.root_dir,
+        .config_dir = native_plan.config_dir,
+    };
+    var emit_result = try compile_emitter.emitProgram(allocator, &source_summary, emit_options);
+    defer emit_result.deinit();
+
+    if (emit_result.diagnostics.items.len > 0) {
+        for (emit_result.diagnostics.items) |diag| {
+            try writer.print("zts: emit error: {s}: {s}\n", .{ diag.path, diag.message });
+        }
     }
-    try writer.writeAll("],\"sources\":[],\"plan\":null,\"diagnostics\":[{\"message\":");
-    try std.json.encodeJsonString(result.diagnostic orelse "Unknown request failure", .{}, writer);
-    try writer.writeAll("}],\"source\":null,\"bind\":null,\"check\":null,\"diagnostic\":");
-    try std.json.encodeJsonString(result.diagnostic orelse "Unknown request failure", .{}, writer);
-    try writer.writeAll("}\n");
-}
 
-fn modeLabel(mode: cli_types.CompileMode) []const u8 {
-    return switch (mode) {
-        .normal => "normal",
-        .build => "build",
-        .watch => "watch",
-    };
-}
+    // Write JS output
+    if (emit_result.js_output.items.len > 0) {
+        try writer.writeAll(emit_result.js_output.items);
+    }
 
-fn configLabel(config: @import("./compile/types.zig").ConfigResolution) []const u8 {
-    return switch (config) {
-        .none => "none",
-        .explicit_project => "explicit-project",
-        .discovered_local_tsconfig => "local-tsconfig",
-        .skipped_by_ignore_config => "ignore-config",
-    };
-}
-
-test "request failure with graphJson ends with request-stage json" {
-    var parsed = cli_types.ParsedArgs.init(std.testing.allocator);
-    defer parsed.deinit();
-
-    parsed.command = .compile;
-    parsed.compile_mode = .normal;
-    try parsed.passthrough.appendSlice(&[_][]const u8{
-        "--graphJson",
-        "--project",
+    const has_errors = check_summary.diagnostics.items.len > 0 or 
+                       source_summary.diagnostics.items.len > 0 or
+                       emit_result.diagnostics.items.len > 0;
+    try writer.print("zts: compile complete status={s} files={d}\n", .{
+        if (has_errors) "errors" else "ok",
+        source_summary.loaded_count,
     });
 
-    var buffer = std.ArrayList(u8).init(std.testing.allocator);
-    defer buffer.deinit();
+    if (has_errors) {
+        try writer.writeAll("zts: compile failed\n");
+        return 1;
+    }
 
-    const exit_code = try run(&parsed, buffer.writer());
-    try std.testing.expectEqual(@as(u8, 1), exit_code);
-    try std.testing.expect(std.mem.startsWith(u8, buffer.items, "{\"status\":\"error\""));
-    try std.testing.expect(std.mem.indexOf(u8, buffer.items, "\"schemaVersion\":1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, buffer.items, "\"cwd\":") != null);
-    try std.testing.expect(std.mem.indexOf(u8, buffer.items, "\"stage\":\"request\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, buffer.items, "\"request\":{\"projectPath\":null") != null);
-    try std.testing.expect(std.mem.indexOf(u8, buffer.items, "\"sources\":[]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, buffer.items, "\"plan\":null") != null);
-    try std.testing.expect(std.mem.indexOf(u8, buffer.items, "\"diagnostics\":[{\"message\":\"Option '--project' expects a path.\"}]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, buffer.items, "\"source\":null") != null);
-    try std.testing.expect(std.mem.indexOf(u8, buffer.items, "\"bind\":null") != null);
-    try std.testing.expect(std.mem.indexOf(u8, buffer.items, "\"check\":null") != null);
-    try std.testing.expect(std.mem.indexOf(u8, buffer.items, "\"diagnostic\":\"Option '--project' expects a path.\"") != null);
+    return 0;
 }

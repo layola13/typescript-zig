@@ -118,7 +118,7 @@ pub fn writePlan(
         "zts: native compile plan (action={s}, mode={s}, config={s})\n",
         .{
             actionLabel(result.action),
-            modeLabel(request.mode),
+            modeLabel(request.compile_mode),
             if (plan.config_path != null) "yes" else "no",
         },
     );
@@ -799,6 +799,8 @@ test "build native plan from tsconfig" {
 
     const result = types.CompileResult{
         .exit_code = 0,
+        .list_files_only = false,
+        .native_failed = false,
         .action = .compile,
         .mode = .normal,
         .config_resolution = .explicit_project,
@@ -858,6 +860,8 @@ test "expand include directory recursively" {
 
     const result = types.CompileResult{
         .exit_code = 0,
+        .list_files_only = false,
+        .native_failed = false,
         .action = .compile,
         .mode = .normal,
         .config_resolution = .explicit_project,
@@ -913,6 +917,8 @@ test "config-relative include resolves under project directory" {
 
     const result = types.CompileResult{
         .exit_code = 0,
+        .list_files_only = false,
+        .native_failed = false,
         .action = .compile,
         .mode = .normal,
         .config_resolution = .explicit_project,
@@ -980,6 +986,8 @@ test "extends recursively inherits parent compiler options and include" {
 
     const result = types.CompileResult{
         .exit_code = 0,
+        .list_files_only = false,
+        .native_failed = false,
         .action = .compile,
         .mode = .normal,
         .config_resolution = .explicit_project,
@@ -1049,6 +1057,8 @@ test "extends child overrides parent files and include" {
 
     const result = types.CompileResult{
         .exit_code = 0,
+        .list_files_only = false,
+        .native_failed = false,
         .action = .compile,
         .mode = .normal,
         .config_resolution = .explicit_project,
@@ -1103,6 +1113,7 @@ test "cli entry recursively discovers relative imports" {
 
     const result = types.CompileResult{
         .exit_code = 0,
+        .native_failed = false,
         .action = .compile,
         .mode = .normal,
         .list_files_only = false,

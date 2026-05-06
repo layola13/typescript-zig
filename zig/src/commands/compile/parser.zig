@@ -23,8 +23,25 @@ pub const Declaration = struct {
     module_specifier: ?[]const u8 = null,
     start: SourcePosition,
     end_offset: usize,
+    initializer: ?[]const u8 = null,
+    type_annotation: ?[]const u8 = null,
 };
 
+
+/// Parse variable declaration parts
+pub fn parseVariableParts(contents: []const u8, start: usize, end: usize) struct { initializer: ?[]const u8, type_annotation: ?[]const u8 } {
+    var type_annotation: ?[]const u8 = null;
+    var initializer: ?[]const u8 = null;
+    var eq_pos: ?usize = null;
+    var colon_pos: ?usize = null;
+    for (start..end) |i| {
+        if (contents[i] == ':') colon_pos = i;
+        if (contents[i] == '=') eq_pos = i;
+    }
+    if (colon_pos) |cp| type_annotation = std.mem.trim(u8, contents[cp+1..end], " ");
+    if (eq_pos) |ep| initializer = std.mem.trim(u8, contents[ep+1..end], " ");
+    return .{ .initializer = initializer, .type_annotation = type_annotation };
+}
 pub const ParseResult = struct {
     declarations: std.ArrayList(Declaration),
 
@@ -286,7 +303,11 @@ pub fn parseTopLevel(allocator: std.mem.Allocator, contents: []const u8) !ParseR
                 }
                 if (std.mem.eql(u8, ident, "const") or std.mem.eql(u8, ident, "let") or std.mem.eql(u8, ident, "var")) {
                     const name = nextIdentifier(contents, identifier.end);
-                    try appendDeclaration(allocator, &result, contents, .variable_stmt, pending_export, start_offset, identifier.end, name, null);
+                    // Find end of statement (semicolon or end of line)
+                    var end_pos = identifier.end;
+                    while (end_pos < contents.len and contents[end_pos] != ';' and contents[end_pos] != '\n') end_pos += 1;
+                    const parts = parseVariableParts(contents, identifier.end, end_pos);
+                    try appendDeclEx(allocator, &result, contents, .variable_stmt, pending_export, start_offset, end_pos, name, null, parts.initializer, parts.type_annotation);
                     pending_export = false;
                     continue;
                 }
@@ -367,6 +388,32 @@ fn appendDeclaration(
         .module_specifier = module_specifier,
         .start = positionAt(contents, start_offset),
         .end_offset = if (name) |value| value.end else end_offset,
+    });
+}
+
+/// Append declaration with full options including initializer and type
+fn appendDeclEx(
+    allocator: std.mem.Allocator,
+    result: *ParseResult,
+    contents: []const u8,
+    kind: DeclarationKind,
+    exported: bool,
+    start_offset: usize,
+    end_offset: usize,
+    name: ?Identifier,
+    module_specifier: ?[]const u8,
+    initializer: ?[]const u8,
+    type_annotation: ?[]const u8,
+) !void {
+    try result.declarations.append(.{
+        .kind = kind,
+        .exported = exported,
+        .name = if (name) |value| try allocator.dupe(u8, value.value) else null,
+        .module_specifier = module_specifier,
+        .start = positionAt(contents, start_offset),
+        .end_offset = if (name) |value| value.end else end_offset,
+        .initializer = if (initializer) |v| try allocator.dupe(u8, v) else null,
+        .type_annotation = if (type_annotation) |v| try allocator.dupe(u8, v) else null,
     });
 }
 

@@ -973,13 +973,6 @@ pub const TypeScriptEmitter = struct {
                     self.pos += 1;
                     try self.skipTypeAnnotation(",)");
                 }
-                // Also handle "as Type" in parameter context
-                try self.skipWhitespaceAndComments();
-                if (self.pos + 1 < self.contents.len and self.contents[self.pos] == 'a' and self.contents[self.pos+1] == 's') {
-                    self.pos += 2;
-                    try self.skipWhitespaceAndComments();
-                    try self.skipTypeAnnotation(",)");
-                }
 
                 try self.skipWhitespaceAndComments();
                 if (self.pos < self.contents.len and self.contents[self.pos] == '=') {
