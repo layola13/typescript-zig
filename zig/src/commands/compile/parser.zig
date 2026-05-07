@@ -55,6 +55,8 @@ pub const ParseResult = struct {
         for (self.declarations.items) |decl| {
             if (decl.name) |name| allocator.free(name);
             if (decl.module_specifier) |specifier| allocator.free(specifier);
+            if (decl.initializer) |init_| allocator.free(init_);
+            if (decl.type_annotation) |ta| allocator.free(ta);
         }
         self.declarations.deinit();
     }
@@ -123,6 +125,8 @@ pub fn freeDeclarations(
     for (declarations.items) |decl| {
         if (decl.name) |name| allocator.free(name);
         if (decl.module_specifier) |specifier| allocator.free(specifier);
+        if (decl.initializer) |init_| allocator.free(init_);
+        if (decl.type_annotation) |ta| allocator.free(ta);
     }
     declarations.deinit();
 }

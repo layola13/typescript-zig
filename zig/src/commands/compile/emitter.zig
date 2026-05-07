@@ -240,6 +240,24 @@ pub const TypeScriptEmitter = struct {
                         }
                         continue;
                     } else if (next_ch == '*') {
+                        // Check if this is a JSDoc comment
+                        if (self.pos < self.contents.len and self.contents[self.pos] == '*') {
+                            // Try to preserve JSDoc for declarations at statement start
+                            if (at_stmt_start) {
+                                try output.writer().writeAll("/**");
+                                self.pos += 2;
+                                while (self.pos + 1 < self.contents.len) {
+                                    if (self.contents[self.pos] == '*' and self.contents[self.pos + 1] == '/') {
+                                        try output.writer().writeAll("*/");
+                                        self.pos += 2;
+                                        break;
+                                    }
+                                    try output.writer().writeByte(self.contents[self.pos]);
+                                    self.pos += 1;
+                                }
+                                continue;
+                            }
+                        }
                         self.pos += 1;
                         while (self.pos + 1 < self.contents.len) {
                             if (self.contents[self.pos] == '*' and self.contents[self.pos + 1] == '/') {
@@ -1213,6 +1231,53 @@ pub const TypeScriptEmitter = struct {
         }
     }
 
+
+    fn emitJSDocAndWhitespace(self: *TypeScriptEmitter, output: *std.ArrayList(u8)) !void {
+        while (self.pos < self.contents.len) {
+            const ch = self.contents[self.pos];
+            if (std.ascii.isWhitespace(ch)) {
+                try output.writer().writeByte(ch);
+                self.pos += 1;
+            } else if (ch == '/' and self.pos + 2 < self.contents.len) {
+                const next1 = self.contents[self.pos + 1];
+                const next2 = self.contents[self.pos + 2];
+                if (next1 == '*' and next2 == '*') {
+                    // JSDoc comment - emit it
+                    try output.writer().writeAll("/**");
+                    self.pos += 3;
+                    while (self.pos + 1 < self.contents.len) {
+                        if (self.contents[self.pos] == '*' and self.contents[self.pos + 1] == '/') {
+                            try output.writer().writeAll("*/");
+                            self.pos += 2;
+                            break;
+                        }
+                        try output.writer().writeByte(self.contents[self.pos]);
+                        self.pos += 1;
+                    }
+                } else if (next1 == '/') {
+                    // Line comment - skip
+                    while (self.pos < self.contents.len and self.contents[self.pos] != '\n') {
+                        self.pos += 1;
+                    }
+                } else if (next1 == '*') {
+                    // Block comment (not JSDoc) - skip
+                    self.pos += 2;
+                    while (self.pos + 1 < self.contents.len) {
+                        if (self.contents[self.pos] == '*' and self.contents[self.pos + 1] == '/') {
+                            self.pos += 2;
+                            break;
+                        }
+                        self.pos += 1;
+                    }
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
     pub fn emitDeclarations(self: *TypeScriptEmitter) ![]u8 {
         var output = std.ArrayList(u8).init(self.allocator);
         var self_copy = TypeScriptEmitter{
@@ -1223,7 +1288,8 @@ pub const TypeScriptEmitter = struct {
         };
 
         while (self_copy.pos < self_copy.contents.len) {
-            try self_copy.skipWhitespaceAndComments();
+            // Capture JSDoc comments before declarations
+            try self_copy.emitJSDocAndWhitespace(&output);
             if (self_copy.pos >= self_copy.contents.len) break;
 
             const start = self_copy.pos;
@@ -2858,4 +2924,61 @@ test "emit: preserves @ as numerical operator" {
     const result = try testEmitResult(std.testing.allocator, "const x = a @ b;");
     defer std.testing.allocator.free(result);
     try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "@"));
+}
+
+// --- JSDoc preservation tests ---
+
+test "declaration: preserves JSDoc comment before function" {
+    const input = "/**\n * Adds two numbers\n * @param a First number\n * @param b Second number\n */\nexport function add(a: number, b: number): number {\n    return a + b;\n}";
+    const expected = "/**\n * Adds two numbers\n * @param a First number\n * @param b Second number\n */\nexport function add(a: number, b: number): number;\n";
+
+    var emitter = TypeScriptEmitter.init(std.testing.allocator, input);
+    const result = try emitter.emitDeclarations();
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings(expected, result);
+}
+
+test "declaration: preserves JSDoc comment before interface" {
+    const input = "/** Interface for a person */\ninterface Person {\n    name: string;\n}";
+    const expected = "/** Interface for a person */\ninterface Person {\n    name: string;\n};\n";
+
+    var emitter = TypeScriptEmitter.init(std.testing.allocator, input);
+    const result = try emitter.emitDeclarations();
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings(expected, result);
+}
+
+
+test "declaration: preserves JSDoc comment before class" {
+    const input = "/**\n * A simple class example\n */\nclass Greeter {\n    greeting: string;\n}";
+    
+    var emitter = TypeScriptEmitter.init(std.testing.allocator, input);
+    const result = try emitter.emitDeclarations();
+    defer std.testing.allocator.free(result);
+    
+    try std.testing.expect(std.mem.indexOf(u8, result, "/**") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "class Greeter") != null);
+}
+
+test "emit: preserves JSDoc comment before function" {
+    const input = "/**\n * Adds two numbers\n * @param a First number\n * @param b Second number\n */\nexport function add(a: number, b: number): number {\n    return a + b;\n}";
+
+    var emitter = TypeScriptEmitter.init(std.testing.allocator, input);
+    const result = try emitter.emit();
+    defer std.testing.allocator.free(result);
+    
+    try std.testing.expect(std.mem.indexOf(u8, result, "/**") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "@param") != null);
+}
+
+test "emit: preserves JSDoc comment before class" {
+    const input = "/** Class description */\n@sealed\nclass MyClass {\n    value: number;\n}";
+
+    var emitter = TypeScriptEmitter.init(std.testing.allocator, input);
+    const result = try emitter.emit();
+    defer std.testing.allocator.free(result);
+    
+    try std.testing.expect(std.mem.indexOf(u8, result, "/** Class description */") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "@sealed") == null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "class MyClass") != null);
 }
